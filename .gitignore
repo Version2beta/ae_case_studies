@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+.auth*
+runs/
+workspaces/
+artifacts/
+*.jsonl
+*.ndjson
+.DS_Store
