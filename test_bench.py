@@ -111,17 +111,18 @@ class AccountingTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
-    def test_all_shipped_seeds_pass_screening(self):
-        for spec in json.loads((bench.ROOT / 'cases.json').read_text()).values():
-            bench.screen_seed(spec)
-
-    def test_restic_screening_rejects_identifier_and_paraphrased_hazard(self):
-        spec = json.loads((bench.ROOT / 'cases.json').read_text())['restic']
-        for clue in ['HasAtomicReplace', 'atomic replacement', 'pre-deleting config', 'upgrade_repo.go']:
-            with self.subTest(clue=clue):
-                contaminated = {**spec, 'seed': [{'text': clue}]}
-                with self.assertRaises(ValueError):
-                    bench.screen_seed(contaminated)
+    def test_preparation_uses_real_init_prompt_without_repair_instructions_or_edit_tools(self):
+        args = bench.parser().parse_args(['prepare', 'caddy', '--source', '/source',
+                                         '--ae-root', '/installed', '--ae-model', 'fixture/model'])
+        context = argparse.Namespace(args=args)
+        command = bench.preparation_command(context, Path('/sessions'), Path('/preparation-prompt.md'))
+        self.assertEqual(command[-1], '@/preparation-prompt.md')
+        self.assertNotIn('--append-system-prompt', command)
+        tools = command[command.index('--tools') + 1].split(',')
+        self.assertNotIn('edit', tools)
+        self.assertNotIn('write', tools)
+        self.assertIn('ae_record', tools)
+        self.assertNotIn('TASK.md', command)
 
     def test_output_inside_benchmark_repository_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -249,7 +250,10 @@ class ProcessIntegrationTests(unittest.TestCase):
     def test_handoff_failure_preserves_results_but_blocks_canonical_selection(self):
         self.run_pair(True)
 
-    def test_check_runs_seed_query_and_preserves_artifact_invariants(self):
+    def test_preparation_source_changes_prevent_both_repair_runs_without_resetting_the_source(self):
+        self.run_pair(False, preparation_failure=True)
+
+    def test_check_validates_init_prompt_without_models_or_store_creation(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source, harness, tools = root / 'source', root / 'harness', root / 'tools'
@@ -289,14 +293,8 @@ from pathlib import Path
 args=sys.argv
 project=Path(args[args.index('--project')+1])
 command=args[2]
-if command == 'init':
-    (project / '.ae').mkdir()
-    (project / '.ae/journal.ndjson').write_text('')
-elif command == 'apply':
-    with (project / '.ae/journal.ndjson').open('a') as journal:
-        journal.write(sys.stdin.read())
-elif command == 'query':
-    print('fixture query')
+if command == 'prepare-prompt':
+    print('fixture preparation prompt')
 else:
     raise SystemExit(2)
 ''')
@@ -313,13 +311,14 @@ else:
             result = json.loads((run / 'results.json').read_text())
             self.assertTrue(result['check_passed'])
             self.assertTrue(result['baseline']['baseline_red'])
-            self.assertIn('seed_sha256', result)
+            self.assertNotIn('preparation', result)
+            self.assertFalse((run / 'workspaces/ae-read-check/.ae').exists())
             self.assertNotIn('error', result)
-            self.assertTrue((run / 'logs/seed-query.json').is_file())
+            self.assertTrue((run / 'logs/preparation-prompt-check.json').is_file())
             self.assertTrue((run / 'report.md').is_file())
-            self.assertIn('logs/seed-query.json', result['evidence_sha256'])
+            self.assertIn('logs/preparation-prompt-check.json', result['evidence_sha256'])
 
-    def run_pair(self, handoff_failure):
+    def run_pair(self, handoff_failure, preparation_failure=False):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source, harness, tools = root / 'source', root / 'harness', root / 'tools'
@@ -364,40 +363,75 @@ if '--version' in sys.argv:
     print('pi fixture'); sys.exit(0)
 a=sys.argv
 value=lambda key:a[a.index(key)+1]
-Path('demo.go').write_text('fixed\\n')
+preparing = any(value.startswith('@') and value != '@TASK.md' for value in a)
+if preparing:
+    assert not Path('TASK.md').exists()
+    assert not Path('zz_case_study_acceptance_test.go').exists()
+    assert '--append-system-prompt' not in a
+    Path('.ae').mkdir()
+    Path('.ae/journal.ndjson').write_text('fixture\\n')
+else:
+    Path('demo.go').write_text('fixed\\n')
 e=[{'type':'session','id':'fixture'},
    {'type':'model_change','provider':value('--provider'),'modelId':value('--model')},
    {'type':'thinking_level_change','thinkingLevel':value('--thinking')}]
-if '--extension' in a:
+if '--extension' in a and not preparing:
     e.append({'type':'custom_message','customType':'ae-context','content':'Layout context'})
 e.append({'type':'message','message':{'role':'assistant','provider':value('--provider'),'model':value('--model'),
     'usage':{'input':1,'output':1,'cacheRead':0,'cacheWrite':0,'totalTokens':2,
     'cost':{'input':.01,'output':.01,'cacheRead':0,'cacheWrite':0,'total':.02}}}})
 (Path(value('--session-dir'))/'fixture.jsonl').write_text(''.join(json.dumps(x)+'\\n' for x in e))
-'''+("if '--extension' in a: print('Æ automatic handoff unavailable',file=sys.stderr)\n" if handoff_failure else ''))
+'''+("if preparing: Path('TASK.md').write_text('unexpected preparation edit')\n" if preparation_failure else '')
+               +("if '--extension' in a and not preparing: print('Æ automatic handoff unavailable',file=sys.stderr)\n" if handoff_failure else ''))
             for path in (go, pi):
                 path.chmod(0o700)
             args = argparse.Namespace(command='run', ae_root=root / 'ae', output=root / 'output',
                 control_model='fixture/sol', ae_model='fixture/luna', control_thinking='high', ae_thinking='medium',
                 pi=str(pi), test_timeout=5, agent_timeout=5, max_calls=35, max_tool_errors=4,
+                preparation_timeout=5, preparation_max_calls=100,
                 order='control,ae', race=True)
 
-            def seed(workspace, spec, ae_root, logs):
-                store = workspace / '.ae'
-                store.mkdir()
-                journal = store / 'journal.ndjson'
-                journal.write_text('fixture\n')
-                return bench.sha(journal)
+            node = tools / 'node'
+            node.write_text('''#!/usr/bin/env python3
+import json,sys,subprocess
+from pathlib import Path
+command=sys.argv[2]
+if command == 'prepare-prompt':
+    print('fixture preparation prompt')
+elif command == 'read':
+    revision=subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
+    print(json.dumps({'writerLockPresent':False,'state':{
+        'subjects':[{'id':'fixture'}], 'statements':[{'id':'note'}],
+        'evidence':[{'kind':'file','revision':revision,'reference':'demo.go'}], 'relationships':[]}}))
+else:
+    raise SystemExit(2)
+''')
+            node.chmod(0o700)
 
-            with mock.patch.object(bench, 'ROOT', harness), mock.patch.object(bench, 'seed_memory', seed), \
+            with mock.patch.object(bench, 'ROOT', harness), \
                     mock.patch.object(bench, 'ae_identity', return_value={'head': 'fixture'}), \
                     mock.patch.dict(os.environ, {'PATH': str(tools) + os.pathsep + os.environ['PATH']}), \
                     contextlib.redirect_stdout(io.StringIO()):
                 success = bench.execute(args, 'caddy', source)
-                self.assertEqual(success, not handoff_failure)
+                self.assertEqual(success, not (handoff_failure or preparation_failure))
                 run = next(args.output.iterdir())
                 data = json.loads((run / 'results.json').read_text())
+                if preparation_failure:
+                    self.assertFalse(data['preparation']['valid'])
+                    self.assertIn('preparation_changed_source', data['preparation']['problems'])
+                    self.assertEqual(data['arms'], {})
+                    self.assertFalse((run / 'logs/control-agent.json').exists())
+                    self.assertFalse((run / 'logs/ae-agent.json').exists())
+                    self.assertFalse((source / '.ae').exists())
+                    self.assertEqual((source / 'demo.go').read_text(), 'baseline\n')
+                    self.assertEqual((run / 'workspaces/preparation/TASK.md').read_text(), 'unexpected preparation edit')
+                    return
                 self.assertTrue(data['baseline']['baseline_red'])
+                self.assertTrue(data['preparation']['valid'])
+                self.assertEqual(data['preparation']['usage']['estimated_usd'], .02)
+                self.assertIn('excluded from repair totals', data['preparation']['cost_scope'])
+                self.assertEqual(data['arms']['ae']['usage']['estimated_usd'], .02)
+                self.assertEqual((run / 'preparation-memory.ndjson').read_text(), 'fixture\n')
                 self.assertTrue(data['arms']['control']['repair_verified'])
                 self.assertTrue(data['arms']['ae']['repair_verified'])
                 self.assertEqual((source / 'demo.go').read_text(), 'baseline\n')

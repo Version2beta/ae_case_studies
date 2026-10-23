@@ -1,7 +1,7 @@
 # Æ case studies
 
 Reproducible Caddy, Restic, and Rclone benchmark candidates, with explicit per-arm
-models/reasoning, screened memory, shared regression checks, and private evidence.
+models/reasoning, real Æ initialization before repair, shared regression checks, and private evidence.
 Python 3.10+ standard library only; no Python installation step or build is needed.
 
 **No subject repositories, credentials, or trial logs belong in this repository.**
@@ -14,11 +14,14 @@ or opens PRs in an existing checkout. The old trials remain untouched.
 - macOS or Linux (POSIX process groups), Python 3.10+, Git, Go with a race-capable
   toolchain, and the subject dependencies already cached. Go operations use
   `GOPROXY=off`, `GOSUMDB=off`, `GOTOOLCHAIN=local`, and `-mod=readonly`.
-- Pi with the documented CLI flags; validated locally with Pi 1.4.0. Provider
-  authentication must already be configured through approved Pi mechanisms.
+- Pi with the documented CLI flags. The current Æ package/initialization path is
+  verified with Pi 1.3.0; earlier runner checks used Pi 1.4.0. Select the intended
+  executable with `--pi` and retain its version; do not conflate those results.
+  Provider authentication must already be configured through approved Pi mechanisms.
   Do not pass keys as command arguments or copy auth files into this repository.
-- A **built** external `ae-foundation` checkout with `dist/cli.js` and
-  `integrations/pi/extension.mjs`. Follow that checkout's build instructions.
+- A prebuilt installed `ae-foundation` npm package (or a built external checkout)
+  with `dist/cli.js`, `integrations/pi/extension.mjs` and `prompts/init.md`.
+  Set `--ae-root` to that package root; no Go compiler is needed for Æ itself.
   The runner does not install or update dependencies or rebuild Æ silently.
 - Local clones containing the exact commits in `cases.json`:
 
@@ -52,8 +55,9 @@ subject checkout and built Æ CLI, but it does not launch Pi or a hosted model.
 It runs the shared regression against each baseline and requires an
 **assertion-level failure** with the expected tests actually executed. Compilation
 failure, timeout, skipped tests, or “no tests to run” do not qualify as baseline
-reproduction. It also creates and queries the screened seed through Æ's real CLI.
-No hosted model is invoked. These checks do not exercise the Pi close-hook worker.
+reproduction. It also constructs the validated initialization prompt through Æ's
+real CLI without creating a journal. No hosted model is invoked. These checks do
+not exercise preparation quality or the Pi close-hook worker.
 
 To check a committed known fix using the same frozen regression:
 
@@ -66,7 +70,37 @@ The same command works for Caddy and Rclone with their respective local PR
 checkouts. `--fixed-source` uses that checkout's HEAD, not its uncommitted files.
 See [VALIDATION.md](VALIDATION.md) for what has actually been exercised.
 
-## 2. Run the final candidate comparisons
+## 2. Initialize memory, then run candidate comparisons
+
+`run` first creates a dedicated fresh preparation checkout at the pinned revision.
+It calls Æ's read-only `prepare-prompt` and submits that shared init/update prompt
+to a separately awaited Pi process with the extension loaded. The repair ticket,
+repair instructions and evaluator fixture are not installed in that checkout.
+Only inspection and record-only memory writes are requested; file-edit tools are
+not enabled. Shell access is not a sandbox. The preparation model/reasoning matches
+`--ae-model` / `--ae-thinking`.
+
+The runner checks process/settings/accounting, anchored findings, unchanged source
+and runtime, then freezes `preparation-memory.ndjson`. Preparation failure prevents
+both repair arms from starting. It copies only that validated journal into a fresh
+Æ repair checkout. Source repositories' existing `.ae` directories and previous
+runs are neither copied nor reset. There are no small layout seeds or target-word
+blacklists in this protocol. Each `run` performs fresh preparation; it does not
+accumulate repair discoveries across independent benchmark candidates.
+
+To run initialization only, without repair or Go evaluation:
+
+```sh
+python3 bench.py prepare caddy --source "$SOURCES/caddy" --ae-root "$AE" --output "$OUT" \
+  --ae-model openai-codex/gpt-6.1-sol --ae-thinking high
+```
+
+`prepare` can incur model charges. It needs Node/Git/Pi, but no Go toolchain. It
+uses the same initialization phase as `run`, not a separate seed generator.
+Review its source/history coverage and claim accuracy; a technically valid run
+is not a certificate of comprehensive knowledge.
+
+### Run the repair pairs
 
 **These commands incur provider charges.** They grant the agents ordinary local
 read/edit/test work within newly created subject checkouts. `--offline` disables
@@ -102,8 +136,10 @@ For identical settings across all three, use `run all --source-root "$SOURCES"`
 with the same model flags. `--order ae,control` reverses order. The default is
 control first, then Æ; shared caches and fixed-order effects remain limitations.
 
-Default limits: 35 completed assistant calls, four consecutive tool errors,
-420 seconds per agent, and 120 seconds per evaluator command. Call/error limits
+Preparation defaults: 100 completed assistant calls and 1,200 seconds, configurable
+with `--preparation-max-calls` / `--preparation-timeout`. Repair defaults: 35
+completed assistant calls, four consecutive tool errors, 420 seconds per agent,
+and 120 seconds per evaluator command. Call/error limits
 are **polled**, not atomic pre-call admission controls; an in-flight request can
 finish after a limit is observed. Process groups are terminated on timeout,
 limit, or interruption. Do not rerun an unchanged deterministic failure: inspect
@@ -112,8 +148,8 @@ its logs, fix its cause, then create a new candidate.
 ## 3. Review and explicitly select canonical runs
 
 Each command prints a unique run directory. Review its `report.md`,
-`results.json`, source changes (including new files), actual settings, injected
-context, and test logs. Results are not automatically designated canonical.
+`results.json`, preparation findings/coverage/session, source changes (including
+new files), actual settings, injected context, and test logs. Results are not automatically designated canonical.
 
 ```sh
 python3 bench.py select "$OUT/EXACT-RUN-DIRECTORY" --output "$OUT"
@@ -143,19 +179,20 @@ protocol correction, not an unreported substitution.
 
 ## Memory and ticket policy
 
-- `cases.json` contains **manually curated package-layout summaries**, with pinned
-  source anchors. They are not presented as organically earned session history.
-- A fresh `.ae` journal is created through the trusted CLI with record-only
-  authority. No old subject `.ae` store is copied. `ae init` here means empty
-  initialization, not a verified historical catch-up operation.
-- Restic excludes the capability identifier, atomic-replacement discussion,
-  pre-deletion hazards, rollback language, target implementation filename, and
-  config/migration hints from the seed—not just one exact string. Other cases
-  similarly exclude the known target implementation and solution clues.
-- Screening covers curated seed content, generated initial journal, and actual
-  initial `ae-context` messages. It is a regression guard, **not proof that all
-  semantic leakage is impossible**. Seeds were authored after these defects
-  were known; this limitation cannot be retroactively removed by word filtering.
+- `cases.json` pins source revisions and common acceptance settings; it no longer
+  supplies findings. Æ's general initialization prompt drives source/history
+  examination and actual saves. The first authorized save creates the store.
+- Preparation has no repair ticket in its workspace and must inspect only source
+  and reachable local history. Do not expose previous fixes, evaluator tests,
+  trial journals or drafts. Ordinary file/shell tools are not a security sandbox.
+- Current-source observations must have inspected revision/file anchors; claims
+  about historical changes need actual commit/diff evidence. Source-derived
+  starting knowledge is not invented past decisions or session outcomes.
+- Review preparation evidence, contradictions and gaps before canonical selection.
+  Existing defect knowledge and model training remain possible confounds; these
+  retrospective cases do not establish general ticket blindness. A naturally
+  discovered relevant defect must be disclosed as prior diagnostic knowledge,
+  not rejected merely because its source filename is in the repair area.
 - Tickets are explicitly constructed scenarios. They omit target source paths,
   package-test commands, and invented diagnostic stack traces. They still state
   the relevant user operation. Do not call them verified customer incidents.
@@ -168,7 +205,7 @@ protocol correction, not an unreported substitution.
 
 Artifacts stay outside this repository, with private file modes by default:
 
-- `inputs/`: frozen runner, cases, ticket, common instructions, seed, and evaluator
+- `inputs/`: frozen runner, cases, ticket, common instructions, and evaluator
   fixture, with hashes in `results.json`.
 - `workspaces/`: fresh baseline, participant, and evaluator clones. Evaluation
   fixtures are installed **after** agents finish, in separate evaluator clones.
@@ -178,8 +215,11 @@ Artifacts stay outside this repository, with private file modes by default:
   untracked Go tests and deletions. Symlinks/escaping paths are rejected.
 - `logs/`: argv/cwd/exit/time metadata and stdout/stderr for separate commands.
   Shell exit masking is avoided in the evaluator: Go checks are direct processes.
-- `seed-before.ndjson`, `seed-after.ndjson`: initial versus resulting memory;
-  Æ source/runtime hashes before the run and an unchanged check afterward.
+- `preparation-prompt.md`, `preparation-result.json`, `preparation-sessions/`:
+  exact initialization input, settings, execution/accounting and observed work.
+- `preparation-memory.ndjson`, `memory-after-repair.ndjson`: prepared snapshot
+  versus resulting repair memory. The former's hash is checked before copying;
+  Æ runtime/prompt/package hashes are retained and checked for changes.
 - `report.md` / `results.json`: bounded repair evidence distinct from treatment
   validity. Canonical selection stores the results hash and verifies input hashes.
 
@@ -187,8 +227,11 @@ Total tokens include repeated cached input. Assistant-call counts differ from
 usage-event counts when compaction or other separately billed events occur.
 Missing token or price metadata stays unknown; reasoning-token counts are not
 invented. Provider charges are estimates, not invoices. Phase/cognitive attribution
-is deliberately omitted. Agent time excludes later evaluator work. Seed curation,
-human review, subscriptions, external charges, and PR preparation are unmeasured.
+is deliberately omitted. Repair table costs/times **exclude preparation** and
+later evaluator work. Preparation usage/time/cost estimates are retained in a
+separate report section and JSON object, not added to repair totals. These are
+repair-only figures, not lifecycle/cold-start cost or an assumed amortization.
+Human review, subscriptions, external charges, and PR preparation are unmeasured.
 No general savings, causal cache explanation, production guarantee, or maintainer
 approval follows from a green local run.
 

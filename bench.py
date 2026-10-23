@@ -61,14 +61,6 @@ def safe_relative(name):
 
 
 @dataclass(frozen=True)
-class SeedFact:
-    id: str
-    name: str = ''
-    file: str = ''
-    text: str = ''
-
-
-@dataclass(frozen=True)
 class CaseSpec:
     revision: str
     package: str
@@ -76,8 +68,6 @@ class CaseSpec:
     implementation_prefix: str
     fixture_destination: str
     tests: tuple[str, ...]
-    seed: tuple[SeedFact, ...]
-    excluded_seed_terms: tuple[str, ...]
 
     @classmethod
     def from_mapping(cls, value):
@@ -85,8 +75,6 @@ class CaseSpec:
             revision=value['revision'], package=value['package'], packages=value['packages'],
             implementation_prefix=value['implementation_prefix'],
             fixture_destination=value['fixture_destination'], tests=tuple(value['tests']),
-            seed=tuple(SeedFact(**fact) for fact in value['seed']),
-            excluded_seed_terms=tuple(value['excluded_seed_terms']),
         )
 
 
@@ -238,55 +226,68 @@ def clone(source, target, revision, logs):
         raise ValueError('Source revision includes memory; refusing contaminated checkout')
 
 
-def screen_seed(spec):
-    seed = spec.seed if isinstance(spec, CaseSpec) else spec['seed']
-    excluded = spec.excluded_seed_terms if isinstance(spec, CaseSpec) else spec['excluded_seed_terms']
-    text = json.dumps(json_value(seed)).casefold()
-    hits = [term for term in excluded if term.casefold() in text]
-    if hits:
-        raise ValueError('Seed contains excluded solution clues: ' + ', '.join(hits))
+def preparation_command(context, sessions, prompt):
+    settings = arm_settings(context.args, 'ae')
+    provider, model_id = settings.model.split('/', 1)
+    return [context.args.pi, '--offline', '--provider', provider, '--model', model_id,
+            '--thinking', settings.thinking, '--no-extensions', '--no-mcp', '--no-skills',
+            '--no-prompt-templates', '--no-themes', '--no-context-files', '--no-approve',
+            '--extension', str(context.args.ae_root / 'integrations/pi/extension.mjs'),
+            '--tools', 'read,bash,' + AE_TOOLS, '--session-dir', str(sessions), '--print', '@' + str(prompt)]
 
 
-def seed_memory(workspace, spec, ae_root, logs):
-    spec = case_spec(spec)
-    screen_seed(spec)
-    cli = ae_root / 'dist/cli.js'
-    checked(['node', str(cli), 'init', '--project', str(workspace)], workspace, logs / 'seed-init')
-    for index, fact in enumerate(spec.seed):
-        anchor = workspace / safe_relative(fact.file)
-        if not anchor.is_file() or not within(anchor, workspace):
-            raise ValueError('Seed source anchor missing at pinned revision')
-        subject = fact.id
-        evidence = subject + '-source'
-        statement = subject + '-finding'
-        commands = [
-            {'type': 'record-subject', 'subject': {'id': subject, 'name': fact.name,
-             'description': 'Manually curated package layout; not historical session memory.'}},
-            {'type': 'record-evidence', 'evidence': {'id': evidence, 'subjectId': subject, 'kind': 'file',
-             'reference': fact.file, 'revision': spec.revision, 'description': 'Source layout anchor'}},
-            {'type': 'record-statement', 'statement': {'id': statement, 'subjectId': subject,
-             'kind': 'finding', 'standing': 'current', 'text': fact.text,
-             'uncertainty': 'Curated source-layout summary, not a verified historical discovery.'}},
-            {'type': 'record-relationship', 'relationship': {'id': subject + '-support', 'kind': 'supports',
-             'from': {'type': 'evidence', 'id': evidence}, 'to': {'type': 'statement', 'id': statement},
-             'basis': 'Layout summary should be checked against the pinned source.'}},
-        ]
-        for number, command in enumerate(commands):
-            request = {'id': f'seed-{index}-{number}', 'at': datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
-                       'source': {'kind': 'import', 'actorId': 'case-study-curator',
-                                  'reference': 'ae-case-studies:layout-v1'}, 'command': command}
-            request_path = logs / f'seed-{index}-{number}-request.json'
-            dump(request_path, request)
-            # CLI reads stdin; use a file, never shell interpolation or direct journal writes.
-            checked(['node', str(cli), 'apply', '--project', str(workspace), '--permit', 'record',
-                     '--authorization', 'operator:case-study-run'], workspace,
-                    logs / f'seed-{index}-{number}', 15, input_path=request_path)
+def prepare_memory(context):
+    """Run the real AE init workflow before TASK.md exists. Never manufacture journal rows."""
+    args, settings = context.args, arm_settings(context.args, 'ae')
+    workspace = context.workspaces / 'preparation'
+    clone(context.source, workspace, context.spec.revision, context.logs)
+    cli = ['node', str(args.ae_root / 'dist/cli.js')]
+    checked(cli + ['prepare-prompt', '--project', str(workspace)], workspace,
+            context.logs / 'preparation-prompt', 15)
+    prompt = context.run / 'preparation-prompt.md'
+    shutil.copyfile(context.logs / 'preparation-prompt.stdout', prompt)
+    sessions = context.run / 'preparation-sessions'
+    sessions.mkdir()
+    stat = process(preparation_command(context, sessions, prompt), workspace,
+                   context.logs / 'preparation-agent', args.preparation_timeout,
+                   lambda: live_stop(sessions, args.preparation_max_calls, args.max_tool_errors))
+    traces = list(sessions.glob('*.jsonl'))
+    usage = result_mapping(analyze(traces[0], settings.model, settings.thinking, None)) if len(traces) == 1 else {'problems': ['missing_or_multiple_sessions']}
+    problems = list(usage['problems'])
+    if live_stop(sessions, args.preparation_max_calls + 1, args.max_tool_errors):
+        problems.append('preparation_limit')
+    if not succeeded(stat):
+        problems.append('preparation_process_failed')
+    problems += extension_problems(settings, (context.logs / 'preparation-agent.stderr').read_text())
+    if git(workspace, 'rev-parse', 'HEAD') != context.spec.revision:
+        problems.append('preparation_changed_head')
+    files = snapshot_changes(workspace, context.run / 'preparation-source-changes', exclude_ticket=False)
+    if files:
+        problems.append('preparation_changed_source')
+    prepared = {'model': settings.model, 'thinking': settings.thinking, 'agent': result_mapping(stat),
+                'usage': usage, 'problems': problems, 'valid': False, 'cost_scope': 'preparation-only; excluded from repair totals',
+                'coverage': 'agent-reported; requires review', 'files': files}
+    context.record.preparation = prepared
+    checked(cli + ['read', '--project', str(workspace)], workspace, context.logs / 'preparation-read', 30)
+    recovered = json.loads((context.logs / 'preparation-read.stdout').read_text())
+    state = recovered['state']
+    if recovered['writerLockPresent']:
+        problems.append('preparation_locked')
+    if not state['statements'] or not any(e.get('revision') == context.spec.revision and e.get('kind') == 'file' for e in state['evidence']):
+        problems.append('preparation_missing_anchored_findings')
     journal = workspace / '.ae/journal.ndjson'
-    text = journal.read_text().casefold()
-    if any(term.casefold() in text for term in spec.excluded_seed_terms):
-        raise ValueError('Generated journal contains an excluded solution clue')
-    shutil.copy2(journal, logs.parent / 'seed-before.ndjson')
-    return sha(journal)
+    if journal.is_file():
+        frozen = context.run / 'preparation-memory.ndjson'
+        shutil.copyfile(journal, frozen)
+        frozen.chmod(0o600)
+        prepared['memory_sha256'] = sha(frozen)
+    prepared['counts'] = {name: len(state[name]) for name in ('subjects', 'statements', 'evidence', 'relationships')}
+    if ae_identity(args.ae_root) != context.record.ae_identity:
+        problems.append('preparation_runtime_changed')
+    prepared['valid'] = not problems
+    dump(context.run / 'preparation-result.json', prepared)
+    if not prepared['valid']:
+        raise RuntimeError('AE initialization failed validation; no repair sessions launched')
 
 
 def number(value):
@@ -386,7 +387,7 @@ def session_policy_problems(collected, model, thinking, expect_memory):
         problems.append('selected_model_mismatch')
     if not collected.thinking_levels or any(value != thinking for value in collected.thinking_levels):
         problems.append('effective_reasoning_mismatch')
-    if bool(collected.context) != expect_memory:
+    if expect_memory is not None and bool(collected.context) != expect_memory:
         problems.append('memory_treatment_mismatch')
     return problems
 
@@ -431,13 +432,13 @@ def fixture_result(checkout, spec, inputs, logs, name, timeout):
                            and succeeded(result)}
 
 
-def snapshot_changes(workspace, destination):
+def snapshot_changes(workspace, destination, exclude_ticket=True):
     destination.mkdir()
     tracked = git(workspace, 'diff', 'HEAD', '--name-only', '-z').split('\0')
     untracked = git(workspace, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')
     files = []
     for name in sorted(set(tracked + untracked) - {''}):
-        if name == 'TASK.md' or name.startswith('.ae/'):
+        if (exclude_ticket and name == 'TASK.md') or name.startswith('.ae/'):
             continue
         relative = safe_relative(name)
         path = workspace / relative
@@ -490,7 +491,6 @@ def frozen_inputs(run, case, spec):
                          (ROOT / 'tickets' / (case + '.md'), 'TASK.md'),
                          (ROOT / 'acceptance' / (case + '_test.go'), 'acceptance_test.go')]:
         shutil.copy2(source, inputs / name)
-    dump(inputs / 'seed.json', spec.seed)
     return inputs
 
 
@@ -510,9 +510,13 @@ def ae_identity(ae_root):
     extension = ae_root / 'integrations/pi/extension.mjs'
     if not cli.is_file() or not extension.is_file():
         raise ValueError('Built AE checkout required (dist/cli.js and Pi extension)')
-    paths = [path for base in ('src', 'dist', 'integrations/pi') for path in (ae_root / base).rglob('*')
-             if path.is_file() and path.suffix in ('.ts', '.js', '.mjs')]
-    return {'head': git(ae_root, 'rev-parse', 'HEAD'), 'status': git(ae_root, 'status', '--short'),
+    paths = [path for base in ('src', 'dist', 'integrations/pi', 'prompts') for path in (ae_root / base).rglob('*')
+             if path.is_file() and path.suffix in ('.ts', '.js', '.mjs', '.md')]
+    paths.append(ae_root / 'package.json')
+    if not (ae_root / 'prompts/init.md').is_file():
+        raise ValueError('AE initialization prompt missing from package')
+    return {'head': git(ae_root, 'rev-parse', 'HEAD') if (ae_root / '.git').exists() else None,
+            'status': git(ae_root, 'status', '--short') if (ae_root / '.git').exists() else 'installed package',
             'runtime_files': {str(path.relative_to(ae_root)): sha(path) for path in sorted(paths)}}
 
 
@@ -555,7 +559,7 @@ class RunRecord:
     go_version: str | None = None
     pi_version: str | None = None
     baseline: dict | None = None
-    seed_sha256: str | None = None
+    preparation: dict | None = None
     fixed_revision: str | None = None
     fixed: dict | None = None
     order: list[str] | None = None
@@ -606,7 +610,7 @@ class ArmAttempt:
 
 def report(run, result):
     lines = [f"# {result['case']} benchmark candidate", '',
-             'Canonical only after explicit selection; estimates exclude seed curation and human review.', '',
+             'Canonical only after explicit selection. Table costs/times cover repair only; preparation is retained separately and excluded.', '',
              '| Arm | Requested model / reasoning | Agent seconds | Calls | Tokens | Estimated USD | Repair verified | Valid treatment |',
              '|---|---|---:|---:|---:|---:|---|---|']
     for arm, item in result.get('arms', {}).items():
@@ -618,17 +622,23 @@ def report(run, result):
               '- Read results.json and test JSON logs for exact failures, model settings and treatment warnings.',
               '- Shared acceptance tests are frozen evaluator tests derived from known regressions, not hidden production incidents.',
               '- Different models/reasoning are allowed and reported; those comparisons do not isolate memory.',
-              '- Broad curated layout memory is supplied, not organically earned historical memory.',
+              '- AE runs real project-memory preparation before ticket exposure; source-derived knowledge is not invented past session history.',
+              '- Preparation validity checks process/provenance plumbing, not comprehensive understanding; review its coverage and recorded claims.',
               '- Separate sessions/checkouts and prompt boundaries are not a security sandbox; caches remain shared.',
               '- Candidate evaluation is outside measured agent time; failed candidate runs remain private protocol evidence.',
               '- Raw logs/patches may contain sensitive data; do not publish without review.',
               '', f"Canonical eligible: {result.get('canonical_eligible', False)}", '']
+    if result.get('preparation'):
+        prep = result['preparation']
+        lines += ['## Preparation (excluded from repair totals)', '',
+                  f"Model/reasoning: {prep['model']} / {prep['thinking']}; seconds: {prep['agent']['seconds']}; "
+                  f"calls: {prep['usage'].get('assistant_calls', 'unknown')}; estimated USD: {prep['usage'].get('estimated_usd', 'unknown')}.",
+                  f"Valid execution: {prep['valid']}. Review preparation-memory.ndjson and the preparation session for coverage/gaps.", '']
     (run / 'report.md').write_text('\n'.join(lines))
 
 
 def prepare_run(args, case, source):
     spec = load_case(case)
-    screen_seed(spec)
     source = source.resolve()
     git(source, 'cat-file', '-e', spec.revision + '^{commit}')
     if within(args.output, source) or within(source, args.output):
@@ -638,7 +648,7 @@ def prepare_run(args, case, source):
     inputs = frozen_inputs(run, case, spec)
     record = RunRecord(case, args.command, str(source), spec.revision, datetime.now(timezone.utc).isoformat(),
                        {path.name: sha(path) for path in inputs.iterdir()},
-                       {key: getattr(args, key) for key in ('test_timeout', 'agent_timeout', 'max_calls', 'max_tool_errors') if hasattr(args, key)})
+                       {key: getattr(args, key) for key in ('test_timeout', 'agent_timeout', 'max_calls', 'max_tool_errors', 'preparation_timeout', 'preparation_max_calls') if hasattr(args, key)})
     if args.command == 'run':
         record.requested = {arm: {'model': getattr(args, arm + '_model'),
                                   'thinking': getattr(args, arm + '_thinking')} for arm in ('control', 'ae')}
@@ -650,8 +660,9 @@ def collect_environment(context):
     args, record = context.args, context.record
     if args.ae_root:
         record.ae_identity = ae_identity(args.ae_root)
-    record.go_version = subprocess.check_output(['go', 'version'], timeout=15, text=True).strip()
-    if args.command == 'run':
+    if args.command != 'prepare':
+        record.go_version = subprocess.check_output(['go', 'version'], timeout=15, text=True).strip()
+    if args.command in ('run', 'prepare'):
         record.pi_version = subprocess.check_output([args.pi, '--version'], timeout=15, text=True).strip()
 
 
@@ -667,11 +678,12 @@ def prove_baseline(context):
 def run_check(context):
     args, spec, record = context.args, context.spec, context.record
     if args.ae_root:
-        seeded = context.workspaces / 'seed-check'
-        clone(context.source, seeded, spec.revision, context.logs)
-        record.seed_sha256 = seed_memory(seeded, spec, args.ae_root, context.logs)
-        checked(['node', str(args.ae_root / 'dist/cli.js'), 'query', '--project', str(seeded),
-                 '--task', (context.inputs / 'TASK.md').read_text()], seeded, context.logs / 'seed-query', 15)
+        workspace = context.workspaces / 'ae-read-check'
+        clone(context.source, workspace, spec.revision, context.logs)
+        checked(['node', str(args.ae_root / 'dist/cli.js'), 'prepare-prompt', '--project', str(workspace)],
+                workspace, context.logs / 'preparation-prompt-check', 15)
+        if (workspace / '.ae').exists():
+            raise RuntimeError('Read-only initialization prompt construction created a store')
     if args.fixed_source:
         fixed = context.workspaces / 'fixed'
         record.fixed_revision = git(args.fixed_source, 'rev-parse', 'HEAD')
@@ -700,15 +712,6 @@ def session_usage(settings, traces):
     return analyze(traces[0], settings.model, settings.thinking, settings.name == 'ae')
 
 
-def ae_context_problems(spec, settings, traces):
-    if settings.name != 'ae' or len(traces) != 1:
-        return []
-    injected = '\n'.join(event.get('content', '') for event in read_events(traces[0])
-                         if event.get('customType') == 'ae-context').casefold()
-    return ['excluded_clue_in_initial_context'] if any(
-        term.casefold() in injected for term in spec.excluded_seed_terms) else []
-
-
 def extension_problems(settings, stderr):
     if settings.name == 'ae' and any(value in stderr for value in ('Æ automatic handoff unavailable', 'Æ context unavailable')):
         return ['ae_extension_failure']
@@ -718,7 +721,6 @@ def extension_problems(settings, stderr):
 def inspect_agent_attempt(context, settings, workspace, sessions):
     traces = list(sessions.glob('*.jsonl'))
     problems = invariant_problems(context, workspace, sessions)
-    problems += ae_context_problems(context.spec, settings, traces)
     problems += extension_problems(settings, (context.logs / (settings.name + '-agent.stderr')).read_text())
     return AgentInspection(session_usage(settings, traces), problems)
 
@@ -728,7 +730,14 @@ def collect_arm_attempt(context, settings):
     clone(context.source, workspace, context.spec.revision, context.logs)
     shutil.copy2(context.inputs / 'TASK.md', workspace / 'TASK.md')
     if settings.name == 'ae':
-        context.record.seed_sha256 = seed_memory(workspace, context.spec, context.args.ae_root, context.logs)
+        if not context.record.preparation or not context.record.preparation['valid']:
+            raise RuntimeError('Validated project-memory preparation required before repair')
+        memory = context.run / 'preparation-memory.ndjson'
+        if sha(memory) != context.record.preparation['memory_sha256']:
+            raise RuntimeError('Prepared memory changed before repair')
+        (workspace / '.ae').mkdir(mode=0o700)
+        shutil.copyfile(memory, workspace / '.ae/journal.ndjson')
+        (workspace / '.ae/journal.ndjson').chmod(0o600)
     sessions = context.run / (settings.name + '-sessions')
     sessions.mkdir()
     stat = process(agent_command(context.args, settings.name, sessions, context.inputs), workspace,
@@ -738,7 +747,7 @@ def collect_arm_attempt(context, settings):
     dump(context.run / (settings.name + '-files.json'), files)
     inspection = inspect_agent_attempt(context, settings, workspace, sessions)
     if settings.name == 'ae':
-        shutil.copy2(workspace / '.ae/journal.ndjson', context.run / 'seed-after.ndjson')
+        shutil.copy2(workspace / '.ae/journal.ndjson', context.run / 'memory-after-repair.ndjson')
     return ArmAttempt(workspace, sessions, stat, files, inspection)
 
 
@@ -771,6 +780,7 @@ def run_arm(context, settings):
 
 
 def run_candidate(context):
+    prepare_memory(context)
     context.record.order = context.args.order.split(',')
     for name in context.record.order:
         run_arm(context, arm_settings(context.args, name))
@@ -792,8 +802,11 @@ def execute(args, case, source):
     context = prepare_run(args, case, source)
     try:
         collect_environment(context)
-        prove_baseline(context)
-        if args.command == 'check':
+        if args.command != 'prepare':
+            prove_baseline(context)
+        if args.command == 'prepare':
+            prepare_memory(context)
+        elif args.command == 'check':
             run_check(context)
         else:
             run_candidate(context)
@@ -803,6 +816,8 @@ def execute(args, case, source):
             context.record.interrupted = True
     finally:
         finalize_run(context)
+    if args.command == 'prepare':
+        return bool(context.record.preparation and context.record.preparation['valid'] and not context.record.error)
     return context.record.check_passed if args.command == 'check' else context.record.canonical_eligible
 
 
@@ -832,26 +847,29 @@ def parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     default_output = Path.home() / '.local/state/ae_case_studies'
-    for command in ('run', 'check'):
+    for command in ('run', 'check', 'prepare'):
         current = sub.add_parser(command)
         current.add_argument('case', choices=('caddy', 'restic', 'rclone', 'all'))
         current.add_argument('--source', type=Path, help='Existing local clone for a single case; never modified')
         current.add_argument('--source-root', type=Path, help='Parent of caddy/restic/rclone clones for all cases')
         current.add_argument('--output', type=Path, default=default_output)
-        current.add_argument('--ae-root', type=Path, required=command == 'run')
+        current.add_argument('--ae-root', type=Path, required=command in ('run', 'prepare'))
         current.add_argument('--test-timeout', type=float, default=120)
         if command == 'check':
             current.add_argument('--fixed-source', type=Path, help='Optional committed reference fix (single case only)')
-        else:
-            current.add_argument('--control-model', required=True, help='Exact provider/model ID')
+        if command in ('run', 'prepare'):
+            current.add_argument('--preparation-timeout', type=float, default=1200)
+            current.add_argument('--preparation-max-calls', type=int, default=100)
             current.add_argument('--ae-model', required=True, help='Exact provider/model ID')
-            current.add_argument('--control-thinking', choices=THINKING, default='high')
             current.add_argument('--ae-thinking', choices=THINKING, default='high')
+            current.add_argument('--max-tool-errors', type=int, default=4)
+            current.add_argument('--pi', default='pi')
+        if command == 'run':
+            current.add_argument('--control-model', required=True, help='Exact provider/model ID')
+            current.add_argument('--control-thinking', choices=THINKING, default='high')
             current.add_argument('--agent-timeout', type=float, default=420)
             current.add_argument('--max-calls', type=int, default=35)
-            current.add_argument('--max-tool-errors', type=int, default=4)
             current.add_argument('--order', choices=('control,ae', 'ae,control'), default='control,ae')
-            current.add_argument('--pi', default='pi')
             current.add_argument('--race', action=argparse.BooleanOptionalAction, default=True)
     current = sub.add_parser('select', help='Explicitly designate a completed pair canonical, without publishing it')
     current.add_argument('run', type=Path)
@@ -874,11 +892,11 @@ def main():
                 parser().error('all requires --source-root and forbids --source/--fixed-source')
         elif not args.source or args.source_root:
             parser().error('a single case requires --source, not --source-root')
-        for flag in ('test_timeout', 'agent_timeout', 'max_calls', 'max_tool_errors'):
+        for flag in ('test_timeout', 'agent_timeout', 'max_calls', 'max_tool_errors', 'preparation_timeout', 'preparation_max_calls'):
             if hasattr(args, flag) and (not math.isfinite(getattr(args, flag)) or getattr(args, flag) <= 0):
                 parser().error('limits must be positive finite numbers')
-        if args.command == 'run':
-            for model in (args.control_model, args.ae_model):
+        if args.command in ('run', 'prepare'):
+            for model in ([args.control_model, args.ae_model] if args.command == 'run' else [args.ae_model]):
                 if (not re.fullmatch(r'[A-Za-z0-9_.-]+/[^\s]+', model)
                         or any(model.endswith(':' + level) for level in THINKING)):
                     parser().error('model must be provider/exact-model-id; use separate thinking options')

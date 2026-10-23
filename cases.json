@@ -5,11 +5,9 @@
     "packages": "./modules/caddyhttp/reverseproxy/...",
     "implementation_prefix": "modules/caddyhttp/",
     "fixture_destination": "modules/caddyhttp/reverseproxy/zz_case_study_acceptance_test.go",
-    "tests": ["TestCaseStudyUpgradeSetupCleanup"],
-    "seed": [
-      {"id": "caddy-layout", "name": "Caddy HTTP module layout", "file": "modules/caddyhttp/caddyhttp.go", "text": "HTTP server and handler infrastructure lives in modules/caddyhttp. Concrete HTTP modules occupy subdirectories. Read the implementation and existing package tests before changing behavior."}
-    ],
-    "excluded_seed_terms": ["streaming.go", "handleUpgradeResponse", "Hijack", "idempotent", "half-close", "CloseWrite", "too many open files"]
+    "tests": [
+      "TestCaseStudyUpgradeSetupCleanup"
+    ]
   },
   "restic": {
     "revision": "dd09b6bd01af220b1d5d95c0d4d7d472e05e05c4",
@@ -17,11 +15,9 @@
     "packages": "./internal/repository/...",
     "implementation_prefix": "internal/",
     "fixture_destination": "internal/repository/zz_case_study_acceptance_test.go",
-    "tests": ["TestCaseStudyUpgradeFailurePreservesConfig"],
-    "seed": [
-      {"id": "restic-layout", "name": "Restic package layout", "file": "cmd/restic/main.go", "text": "Command-line entry points live in cmd/restic. Repository operations live in internal/repository; storage implementations live in internal/backend. These layers have package-local tests. Check source and tests rather than assuming a command directly implements its storage operations."}
-    ],
-    "excluded_seed_terms": ["HasAtomicReplace", "atomic", "rollback", "pre-delet", "predelet", "upgrade_repo", "Save/Remove", "config", "migration"]
+    "tests": [
+      "TestCaseStudyUpgradeFailurePreservesConfig"
+    ]
   },
   "rclone": {
     "revision": "81e7372f6fbedfa80592e9a564593d63a8dc32f3",
@@ -29,10 +25,9 @@
     "packages": "./fs/chunkedreader/...",
     "implementation_prefix": "fs/",
     "fixture_destination": "fs/chunkedreader/zz_case_study_acceptance_test.go",
-    "tests": ["TestCaseStudyProducerFailure", "TestCaseStudyConcurrentClose"],
-    "seed": [
-      {"id": "rclone-layout", "name": "Rclone package layout", "file": "fs/fs.go", "text": "Shared filesystem interfaces and operations live under fs. Storage-specific implementations live under backend, commands under cmd, and supporting libraries under lib. Use the relevant package tests to check behavior; a backend implementation is not the only place that coordinates transfers."}
-    ],
-    "excluded_seed_terms": ["chunkedreader", "parallel.go", "WaitWrite", "producer", "deadlock", "premature", "completion", "mutex"]
+    "tests": [
+      "TestCaseStudyProducerFailure",
+      "TestCaseStudyConcurrentClose"
+    ]
   }
 }

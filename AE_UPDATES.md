@@ -1,6 +1,25 @@
-# Recommended Æ updates before the final trials
+# Æ updates and earlier recommendations
 
-These are bounded recommendations, not changes made to Æ. The inspected checkout
+## Current status
+
+Subsequent local Æ changes added streaming index inspection, classified capture
+failures/session status, asserted-origin/reported-revision display, exact retrieval
+receipts and explicit init/update preparation. A prebuilt npm package now contains
+the CLI, Pi extension and shared preparation prompt; installed-package tests pass
+with Pi 1.3.0. The runner now uses that actual initialization workflow before any
+repair, rather than curated layout seeds, and retains preparation usage separately.
+See [current validation](VALIDATION.md#current-init-based-protocol) and Æ's own
+`docs/implementation-status.md` for acceptance boundaries. An initial Caddy
+preparation attempt hit Codex quota; a later local preparation completed. Detailed
+pilot results remain private, and no canonical repair pair has been run/selected.
+A coverage note exceeded normal retrieval after metadata overhead; Æ's prompt now
+requires short linked coverage records and explicit bounded-context readback.
+No complete-history or causal real-model benefit is established.
+
+## Earlier recommendations (historical)
+
+The following were bounded recommendations at the earlier inspection point, not
+claims that they were already implemented then. The inspected checkout
 was `ae-foundation` at `28771bc6a1a13410f02f2b6c695296727f4a891d` with a clean
 tracked working tree. Different/newer Æ implementations need their own check.
 
@@ -100,7 +119,7 @@ The inspected adapter already provides `ae_record`, `ae_status`, `ae_brag`,
 The contribution receipt already disclaims causal savings/invariant-preservation
 claims. Verify and repair these paths instead of adding duplicate tools.
 
-Model/reasoning selection, seed screening, canonical selection, and shared Go
+Model/reasoning selection, preparation evidence review, canonical selection, and shared Go
 acceptance fixtures belong in this benchmark repository. They are not reasons to
 add benchmark-specific bug knowledge or authorization exceptions to Æ.
 

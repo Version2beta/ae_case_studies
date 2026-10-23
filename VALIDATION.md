@@ -1,5 +1,59 @@
 # Validation record
 
+## Current init-based protocol
+
+The runner now invokes Æ's real shared initialization workflow before repair,
+with a separate ticket-free preparation checkout/session and no curated seed.
+Preparation usage is retained separately and excluded from repair-only figures.
+`prepare` runs that phase alone; `check` validates read-only prompt construction
+without launching a model or creating a journal. Installed npm packages are
+supported as `--ae-root`, including prompt/package/runtime fingerprints.
+
+Current local validation: Python compilation and **25 unit/process-integration
+tests passed**. These include failure before either repair arm when preparation
+changes source, unchanged original sources, a frozen snapshot copied into a fresh
+repair checkout, separate preparation/repair accounting, and no-model checks.
+Pi/Node/Go doubles remain explicitly doubles. Æ's latest separate validation
+passed **149 ordinary tests and 13 real Pi 1.3.0 host tests**, with the host suite
+also passing against the installed tarball, including package loading and the
+CLI-generated headless preparation prompt. It caught an
+npm executable-symlink bug (fixed) and Pi print-mode slash dispatch returning before
+a model turn (print slash init now refuses; the caller submits/awaits the shared
+prompt as an ordinary Pi run).
+
+The first real Caddy preparation attempt through the installed package failed
+before inspection: Codex reported its usage limit reached. The retained session
+reports one error response and zero usage tokens/cost; those are provider metadata,
+not an invoice. That attempt saved no findings and launched no repair arms.
+Historical failure artifact:
+`/Users/rob/Development/ae-foundation-validation/caddy-init-comparison-20261022T214835Z/runs/20261022T214835Z-caddy-prepare-3e4b1922`.
+Do not retry unchanged quota failures or quietly switch provider/model settings.
+
+Fresh real `check all` against the installed package passed for Caddy, Restic and
+Rclone: each baseline reached its intended regression assertions and each
+`prepare-prompt` invocation succeeded without creating `.ae`. No reference fix
+or model was run by these checks. Evidence and unit-test logs:
+`/Users/rob/Development/ae-case-study-validation/init-protocol-checks-20261022T215151Z`.
+
+A later local Caddy preparation completed. Detailed pilot results and the
+qualitative memory comparison remain private, not canonical publication data.
+It exposed a coverage note that fit the save-input limit but not the ordinary
+8,000-byte context response including metadata. Æ's preparation prompt now calls
+for coverage text of at most 2,000 UTF-8 bytes per record, a short index with
+separately queryable history/gaps/next-step subjects, and readback confirming saved
+statement IDs and text. The regression preserves the oversized record and checks
+retrieval of short linked records without raising limits or writing on readback.
+The updated installed prompt is tested; hosted-model compliance has not been rerun.
+
+No canonical init-based repair pair has been run/selected. Comprehensive coverage,
+repeat-init quality and causal repair benefit remain unestablished.
+
+## Earlier seed-protocol validation (historical)
+
+The records below describe the superseded seed protocol, not current init-based
+acceptance. Their exact artifacts remain useful provenance; old test counts and
+known gaps must not be represented as current validation.
+
 Date: 2026-10-22. Local environment: macOS arm64, Go 1.27.2, Pi 1.4.0,
 external `ae-foundation` at `28771bc6a1a13410f02f2b6c695296727f4a891d`.
 No hosted-model benchmark was launched. No subject checkout or PR was modified.
